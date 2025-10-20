@@ -10,6 +10,10 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.enums import ParseMode
 
+# For Google Drive downloads
+import subprocess
+import re
+
 # Configuration
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
@@ -258,6 +262,89 @@ async def handle_file(client: Client, message: Message):
                 parse_mode=ParseMode.MARKDOWN
             )
             
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {str(e)}")
+
+
+# --- NEW: Google Drive link handler ---
+@app.on_message(filters.command("gdrive"))
+async def gdrive_command(client: Client, message: Message):
+    """Download Google Drive public video and upload to channel"""
+    try:
+        command_parts = message.text.split(maxsplit=1)
+        if len(command_parts) < 2:
+            await message.reply_text(
+                "❌ Please provide a Google Drive public link!\n\n"
+                "Usage: `/gdrive <public_link>`",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+
+        gdrive_url = command_parts[1].strip()
+
+        # Extract file ID from Google Drive link
+        match = re.search(r"/d/([\w-]+)|id=([\w-]+)", gdrive_url)
+        file_id = match.group(1) or match.group(2) if match else None
+        if not file_id:
+            await message.reply_text("❌ Invalid Google Drive link!")
+            return
+
+        # Download using gdown
+        file_name = f"gdrive_{file_id}.mp4"
+        download_path = f"/content/{file_name}"
+        status_msg = await message.reply_text(f"📥 Downloading from Google Drive...\n\n🔗 `{gdrive_url}`", parse_mode=ParseMode.MARKDOWN)
+
+        # Install gdown if not present
+        try:
+            import gdown
+        except ImportError:
+            subprocess.run(["pip", "install", "gdown"])
+            import gdown
+
+        # Download file
+        start_time = time.time()
+        gdown.download(gdrive_url, download_path, quiet=False)
+        download_time = time.time() - start_time
+
+        # Get file size
+        file_size = os.path.getsize(download_path)
+
+        await status_msg.edit_text(
+            f"📤 Uploading to channel...\n\n"
+            f"📁 File: `{file_name}`\n"
+            f"📦 Size: {format_size(file_size)}",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+        # Upload to channel
+        start_time = time.time()
+        target_chat = CHANNEL_ID if CHANNEL_ID else message.chat.id
+        await client.send_video(
+            chat_id=target_chat,
+            video=download_path,
+            caption=f"📹 {file_name}\n💾 {format_size(file_size)}\n🔗 From Google Drive",
+            supports_streaming=True,
+            progress=progress_callback,
+            progress_args=(status_msg, start_time, "📤 Uploading video...")
+        )
+        upload_time = time.time() - start_time
+        avg_speed = file_size / upload_time if upload_time > 0 else 0
+
+        await status_msg.edit_text(
+            f"✅ **Upload Complete!**\n\n"
+            f"📁 File: `{file_name}`\n"
+            f"📦 Size: {format_size(file_size)}\n"
+            f"⏱️ Download: {format_time(download_time)}\n"
+            f"⏱️ Upload: {format_time(upload_time)}\n"
+            f"⚡ Avg Speed: {format_size(avg_speed)}/s\n"
+            f"📺 Channel: {target_chat if CHANNEL_ID else 'Current chat'}",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+        # Clean up
+        if os.path.exists(download_path):
+            os.remove(download_path)
+
     except Exception as e:
         await message.reply_text(f"❌ Error: {str(e)}")
 
