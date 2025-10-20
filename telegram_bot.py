@@ -4,6 +4,8 @@ Optimized for Google Colab with streaming support and fast uploads
 """
 
 import os
+import sys
+import shutil
 import asyncio
 import time
 from pyrogram import Client, filters
@@ -13,6 +15,8 @@ from pyrogram.enums import ParseMode
 # For Google Drive downloads
 import subprocess
 import re
+import requests
+from io import BytesIO
 
 # Configuration
 API_ID = os.environ.get("API_ID")
@@ -349,6 +353,128 @@ async def gdrive_command(client: Client, message: Message):
         await message.reply_text(f"❌ Error: {str(e)}")
 
 
+# --- NEW: Stream video from URL and upload ---
+@app.on_message(filters.command("uploadurl"))
+async def uploadurl_command(client: Client, message: Message):
+    """Stream video from direct link or Google Drive and upload to channel (no disk save)"""
+    try:
+        command_parts = message.text.split(maxsplit=1)
+        if len(command_parts) < 2:
+            await message.reply_text(
+                "❌ Please provide a direct video link or Google Drive link!\n\n"
+                "Usage: `/uploadurl <link>`",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+
+        url = command_parts[1].strip()
+        status_msg = await message.reply_text(f"📥 Streaming from URL...\n\n🔗 `{url}`", parse_mode=ParseMode.MARKDOWN)
+
+        # If Google Drive link, try to get direct download link
+        if "drive.google.com" in url:
+            # Try to get file id
+            match = re.search(r"/d/([\w-]+)|id=([\w-]+)", url)
+            file_id = match.group(1) or match.group(2) if match else None
+            if not file_id:
+                await status_msg.edit_text("❌ Invalid Google Drive link!")
+                return
+            direct_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        else:
+            direct_url = url
+
+        # Stream download
+        start_time = time.time()
+        response = requests.get(direct_url, stream=True)
+        if response.status_code != 200:
+            await status_msg.edit_text(f"❌ Failed to download. Status code: {response.status_code}")
+            return
+
+        # Get file name from headers or URL
+        file_name = None
+        if 'content-disposition' in response.headers:
+            cd = response.headers['content-disposition']
+            match = re.search('filename="(.+?)"', cd)
+            if match:
+                file_name = match.group(1)
+        if not file_name:
+            file_name = url.split('/')[-1].split('?')[0] or "streamed_video.mp4"
+
+        # Read content into BytesIO (streaming, but still needs RAM)
+        file_bytes = BytesIO()
+        chunk_size = 1024 * 1024  # 1MB
+        total_size = 0
+        for chunk in response.iter_content(chunk_size=chunk_size):
+            if chunk:
+                file_bytes.write(chunk)
+                total_size += len(chunk)
+                # Optionally, update progress here
+        file_bytes.seek(0)
+
+        download_time = time.time() - start_time
+
+        await status_msg.edit_text(
+            f"📤 Uploading to channel...\n\n"
+            f"📁 File: `{file_name}`\n"
+            f"📦 Size: {format_size(total_size)}",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+        # Upload to channel
+        start_time = time.time()
+        target_chat = CHANNEL_ID if CHANNEL_ID else message.chat.id
+        await client.send_video(
+            chat_id=target_chat,
+            video=file_bytes,
+            file_name=file_name,
+            caption=f"📹 {file_name}\n💾 {format_size(total_size)}\n🔗 Streamed from URL",
+            supports_streaming=True,
+            # progress callback not supported for BytesIO
+        )
+        upload_time = time.time() - start_time
+        avg_speed = total_size / upload_time if upload_time > 0 else 0
+
+        await status_msg.edit_text(
+            f"✅ **Upload Complete!**\n\n"
+            f"📁 File: `{file_name}`\n"
+            f"📦 Size: {format_size(total_size)}\n"
+            f"⏱️ Download: {format_time(download_time)}\n"
+            f"⏱️ Upload: {format_time(upload_time)}\n"
+            f"⚡ Avg Speed: {format_size(avg_speed)}/s\n"
+            f"📺 Channel: {target_chat if CHANNEL_ID else 'Current chat'}",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {str(e)}")
+
+
+def ensure_colab_copy():
+    """Copy this script to /content/telegram_bot.py if running in Google Colab environment.
+
+    This helps when users run commands expecting the script under /content.
+    """
+    try:
+        # Detect Colab-like environment
+        if os.path.isdir("/content"):
+            src = os.path.abspath(__file__) if "__file__" in globals() else None
+            dest = "/content/telegram_bot.py"
+            if src and os.path.abspath(src) != os.path.abspath(dest):
+                # Copy if missing or outdated
+                should_copy = (not os.path.exists(dest))
+                if not should_copy:
+                    try:
+                        should_copy = os.path.getmtime(src) > os.path.getmtime(dest)
+                    except Exception:
+                        should_copy = True
+                if should_copy:
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    shutil.copy2(src, dest)
+                    print("📄 Copied script to /content/telegram_bot.py for convenience.")
+    except Exception as _e:
+        # Non-fatal if copy fails; continue running from current path
+        pass
+
+
 def main():
     """Start the bot"""
     print("🚀 Starting Telegram Bot...")
@@ -356,7 +482,9 @@ def main():
     print(f"📡 Channel: {CHANNEL_ID if CHANNEL_ID else 'Not configured'}")
     print(f"⚙️ Workers: {WORKERS}")
     print("\n✅ Bot is running! Press Ctrl+C to stop.\n")
-    
+    # Ensure a copy exists under /content for Colab users running '!python /content/telegram_bot.py'
+    ensure_colab_copy()
+
     app.run()
 
 
