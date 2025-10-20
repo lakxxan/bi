@@ -98,6 +98,16 @@ os.environ["CHANNEL_ID"] = "@your_channel"
 ✅ Bot admin privileges තියෙනවද check කරන්න
 ✅ Channel username හරි ද verify කරන්න
 
+### ❌ 400 PEER_ID_INVALID fix
+මෙම error එක එන්නේ bot එකට channel එක "meet" කරලා නැති නිසා හෝ CHANNEL_ID / permissions වැරදි නිසා.
+
+Steps:
+- CHANNEL_ID صحیحද බලන්න: `@yourchannel` හෝ `-100xxxxxxxxxx`
+- Bot එක channel එකට Admin ලෙස add කරලා තියෙනවද? (Post Messages permission අවශ්‍යයි)
+- Bot එක once channel එකට message එකක් දාලා බලන්න
+- Bot තුළ diagnose command එක run කරන්න:
+	- `/checkchannel` — CHANNEL_ID resolve කරලා test message එකක් try කරයි, permissions show කරයි
+
 ---
 
 ## 📞 Need Help?

@@ -121,6 +121,55 @@ async def status_command(client: Client, message: Message):
     await message.reply_text(status_text, parse_mode=ParseMode.MARKDOWN)
 
 
+@app.on_message(filters.command("checkchannel"))
+async def check_channel_command(client: Client, message: Message):
+    """Diagnose CHANNEL_ID issues (PEER_ID_INVALID) and verify bot permissions."""
+    try:
+        if not CHANNEL_ID:
+            await message.reply_text("⚠️ CHANNEL_ID is not set. Set env var CHANNEL_ID or use a username like @mychannel.")
+            return
+
+        info_msg = await message.reply_text("🔍 Checking channel access...")
+
+        # Try to resolve the chat and fetch info
+        chat = await client.get_chat(CHANNEL_ID)
+        me = await client.get_me()
+
+        details = [
+            f"📡 CHANNEL_ID: {CHANNEL_ID}",
+            f"🆔 Chat ID: {chat.id}",
+            f"👤 Bot: @{me.username} ({me.id})",
+            f"🔒 Is Private: {getattr(chat, 'is_private', False)}",
+            f"👥 Type: {chat.type.name if hasattr(chat.type, 'name') else chat.type}",
+        ]
+
+        # Try sending a test message
+        try:
+            sent = await client.send_message(chat.id, "✅ Test message from /checkchannel")
+            details.append("✅ Send message: Success")
+            # Clean up test message
+            try:
+                await client.delete_messages(chat.id, sent.id)
+            except Exception:
+                pass
+        except Exception as e:
+            details.append(f"❌ Send message failed: {e}")
+
+        # Check admin rights if it's a channel/supergroup
+        try:
+            member = await client.get_chat_member(chat.id, me.id)
+            details.append(f"🛡️ Bot status: {member.status}")
+            if hasattr(member, 'privileges') and member.privileges:
+                details.append(f"🔧 Privileges: {member.privileges}")
+        except Exception as e:
+            details.append(f"⚠️ Could not check member status: {e}")
+
+        await info_msg.edit_text("\n".join(details))
+
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {e}")
+
+
 @app.on_message(filters.command("upload"))
 async def upload_command(client: Client, message: Message):
     """Upload video from local path"""
